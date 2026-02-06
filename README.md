@@ -2,6 +2,8 @@
 
 Soluzione completa per la generazione di contenuti multimediali AI utilizzando Amazon Nova Canvas (immagini) e Amazon Nova Reel (video).
 
+Complete solution for AI media generation using Amazon Nova Canvas (images) and Amazon Nova Reel (videos).
+
 ## 📋 Indice
 
 - [Italiano](#italiano)
