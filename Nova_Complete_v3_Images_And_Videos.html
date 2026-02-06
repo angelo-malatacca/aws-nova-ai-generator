@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nova Complete - Immagini & Video</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .tabs {
+            display: flex;
+            background: #f8f9fa;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        .tab {
+            flex: 1;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 1.1em;
+            transition: all 0.3s;
+            border-bottom: 3px solid transparent;
+        }
+        .tab:hover { background: #e9ecef; }
+        .tab.active {
+            background: white;
+            border-bottom-color: #667eea;
+            color: #667eea;
+        }
+        .tab-content { display: none; padding: 30px; }
+        .tab-content.active { display: block; }
+        .content { display: grid; grid-template-columns: 420px 1fr; gap: 30px; }
+        .input-section { display: flex; flex-direction: column; gap: 20px; }
+        .form-group { display: flex; flex-direction: column; gap: 10px; }
+        label { font-weight: 600; color: #333; font-size: 1.1em; }
+        .label-hint { font-size: 0.85em; color: #666; font-weight: normal; margin-top: -5px; }
+        textarea, input[type="text"], select {
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 1em;
+            font-family: inherit;
+            transition: border-color 0.3s;
+            margin-bottom: 15px;
+        }
+        textarea { resize: vertical; min-height: 100px; }
+        textarea:focus, input[type="text"]:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.1em;
+            font-weight: 600;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .output-section { display: flex; flex-direction: column; gap: 20px; }
+        .media-container {
+            background: #000;
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 400px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .media-container img, .media-container video {
+            max-width: 100%;
+            height: auto;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+        .placeholder {
+            text-align: center;
+            color: #999;
+            padding: 40px 20px;
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 10px;
+            display: none;
+        }
+        .status.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .status.info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 10px;
+            display: none;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s;
+        }
+        .mode-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .mode-btn {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            background: white;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            color: #333;
+        }
+        .mode-btn.active {
+            border-color: #667eea;
+            background: #667eea;
+            color: white;
+        }
+        .mode-btn:hover:not(.active) {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+        .upload-area {
+            border: 2px dashed #e0e0e0;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: none;
+        }
+        .upload-area.active {
+            display: block;
+        }
+        .upload-area:hover {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+        .upload-area.has-image {
+            padding: 10px;
+        }
+        .upload-preview {
+            max-width: 100%;
+            max-height: 200px;
+            border-radius: 10px;
+            margin-top: 10px;
+        }
+        code {
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            color: #667eea;
+        }
+        @media (max-width: 1200px) {
+            .content { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎨 Nova Complete - Immagini & Video</h1>
+            <p>Genera immagini fotorealistiche e video cinematici con AI</p>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('images')">📸 Immagini</div>
+            <div class="tab" onclick="switchTab('videos')">🎬 Video</div>
+            <div class="tab" onclick="switchTab('endpoints')">⚙️ Endpoint</div>
+        </div>
+
+        <!-- TAB IMMAGINI -->
+        <div id="images-tab" class="tab-content active">
+            <div class="content">
+                <div class="input-section">
+                    <div class="form-group">
+                        <label>🎨 Modalità:</label>
+                        <div class="mode-selector">
+                            <button class="mode-btn active" onclick="setImageMode('text-to-image')">
+                                ✨ Nuova Immagine
+                            </button>
+                            <button class="mode-btn" onclick="setImageMode('image-conditioning')">
+                                🖼️ Modifica Immagine
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="uploadSection" class="upload-area">
+                        <input type="file" id="imageUpload" accept="image/*" style="display:none;" onchange="handleImageUpload(event)">
+                        <div id="uploadPlaceholder">
+                            <p style="font-size: 3em; margin-bottom: 10px;">📤</p>
+                            <p style="font-weight: 600; margin-bottom: 5px;">Carica un'immagine da modificare</p>
+                            <p style="font-size: 0.9em; color: #666;">Clicca o trascina qui</p>
+                        </div>
+                        <img id="uploadPreview" class="upload-preview" style="display:none;">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Risoluzione:
+                            <span class="label-hint">Solo 1280x720 è attualmente supportato da Nova Canvas</span>
+                        </label>
+                        <select id="resolution">
+                            <option value="1280x720" selected>1280x720 - HD (16:9)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Prompt:</label>
+                        <textarea id="imagePrompt" placeholder="Descrivi l'immagine..."></textarea>
+                    </div>
+                    
+                    <div class="form-group" id="webSearchOption">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" id="enableWebSearch" checked style="width: 20px; height: 20px; cursor: pointer;">
+                            <span>🌐 Abilita ricerca web (solo per nuove immagini)</span>
+                        </label>
+                        <span class="label-hint">La ricerca web migliora i risultati per luoghi, persone famose, eventi, ecc.</span>
+                    </div>
+                    
+                    <button onclick="generateImage()">🚀 Genera Immagine</button>
+                    <div id="imageStatus" class="status"></div>
+                </div>
+                <div class="output-section">
+                    <div class="media-container" id="imageContainer">
+                        <div class="placeholder">
+                            <p style="color: #ccc;">La tua immagine apparirà qui</p>
+                        </div>
+                    </div>
+                    <button id="downloadImageBtn" style="display:none; background:#28a745;" onclick="downloadImage()">💾 Scarica</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB VIDEO -->
+        <div id="videos-tab" class="tab-content">
+            <div class="content">
+                <div class="input-section">
+                    <div class="form-group">
+                        <label>🎬 Modalità Video:</label>
+                        <div class="mode-selector">
+                            <button class="mode-btn active" onclick="setVideoMode('text-to-video')">
+                                ✨ Testo → Video
+                            </button>
+                            <button class="mode-btn" onclick="setVideoMode('image-to-video')">
+                                🖼️ Immagine → Video
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="videoUploadSection" class="upload-area">
+                        <input type="file" id="videoImageUpload" accept="image/*" style="display:none;" onchange="handleVideoImageUpload(event)">
+                        <div id="videoUploadPlaceholder">
+                            <p style="font-size: 3em; margin-bottom: 10px;">📤</p>
+                            <p style="font-weight: 600; margin-bottom: 5px;">Carica un'immagine per animarla</p>
+                            <p style="font-size: 0.9em; color: #666;">Clicca o trascina qui</p>
+                            <p style="font-size: 0.8em; color: #999; margin-top: 10px;">L'immagine sarà ridimensionata a 1280x720 (trasparenza rimossa)</p>
+                        </div>
+                        <img id="videoUploadPreview" class="upload-preview" style="display:none;">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Durata:</label>
+                        <select id="duration">
+                            <option value="6" selected>6 secondi (~90s)</option>
+                            <option value="12">12 secondi (~3 min)</option>
+                            <option value="18">18 secondi (~4.5 min)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Prompt Video:</label>
+                        <textarea id="videoPrompt" placeholder="Descrivi il video o il movimento..."></textarea>
+                    </div>
+                    <button onclick="generateVideo()">🎬 Genera Video</button>
+                    <div class="progress-bar" id="videoProgress">
+                        <div class="progress-fill" id="videoProgressFill"></div>
+                    </div>
+                    <div id="videoStatus" class="status"></div>
+                </div>
+                <div class="output-section">
+                    <div class="media-container" id="videoContainer">
+                        <div class="placeholder">
+                            <p style="color: #ccc;">Il tuo video apparirà qui</p>
+                        </div>
+                    </div>
+                    <button id="downloadVideoBtn" style="display:none; background:#28a745;" onclick="downloadVideo()">💾 Scarica Video</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB ENDPOINT -->
+        <div id="endpoints-tab" class="tab-content">
+            <div style="max-width: 800px; margin: 0 auto;">
+                <h2 style="color: #667eea; margin-bottom: 20px;">⚙️ Configurazione Endpoint API</h2>
+                <p style="color: #666; margin-bottom: 30px;">Configura gli endpoint API per le funzionalità di generazione immagini e video.</p>
+                
+                <div style="margin-bottom: 40px; padding: 20px; background: #f8f9fa; border-radius: 10px; border-left: 4px solid #667eea;">
+                    <h3 style="color: #333; margin-bottom: 15px;">ℹ️ Come ottenere gli endpoint</h3>
+                    <ol style="color: #666; line-height: 1.8; padding-left: 20px;">
+                        <li>Deploya lo stack CloudFormation <code>nova-image-generator.yaml</code></li>
+                        <li>Vai nella console AWS CloudFormation</li>
+                        <li>Seleziona lo stack e vai nella tab "Outputs"</li>
+                        <li>Copia i valori degli endpoint:
+                            <ul style="margin-top: 10px;">
+                                <li><strong>ApiEndpoint</strong> → Image Generation Endpoint</li>
+                                <li><strong>VideoApiEndpoint</strong> → Video Generation Endpoint</li>
+                                <li><strong>VideoStatusEndpoint</strong> → Video Status Endpoint</li>
+                            </ul>
+                        </li>
+                        <li>Incolla gli endpoint nei campi sotto e salva</li>
+                    </ol>
+                </div>
+
+                <div class="form-group">
+                    <label>📸 Image Generation Endpoint:</label>
+                    <span class="label-hint">Endpoint per la generazione di immagini con Nova Canvas</span>
+                    <input type="text" id="imageApiEndpoint" value="" placeholder="https://your-api-id.execute-api.us-east-1.amazonaws.com/prod/generate">
+                </div>
+
+                <div class="form-group">
+                    <label>🎬 Video Generation Endpoint:</label>
+                    <span class="label-hint">Endpoint per avviare la generazione video con Nova Reel</span>
+                    <input type="text" id="videoApiEndpoint" value="" placeholder="https://your-api-id.execute-api.us-east-1.amazonaws.com/prod/generate-video">
+                </div>
+
+                <div class="form-group">
+                    <label>📊 Video Status Endpoint:</label>
+                    <span class="label-hint">Endpoint per verificare lo stato della generazione video</span>
+                    <input type="text" id="statusApiEndpoint" value="" placeholder="https://your-api-id.execute-api.us-east-1.amazonaws.com/prod/video-status">
+                </div>
+
+                <button onclick="saveEndpoints()" style="width: 100%;">💾 Salva Configurazione</button>
+                <div id="endpointStatus" class="status"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentImageData = null;
+        let currentVideoUrl = null;
+        let pollingInterval = null;
+        let currentImageMode = 'text-to-image';
+        let uploadedImageBase64 = null;
+        let currentVideoMode = 'text-to-video';
+        let uploadedVideoImageBase64 = null;
+
+        function setImageMode(mode) {
+            currentImageMode = mode;
+            const buttons = document.querySelectorAll('.mode-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            const uploadSection = document.getElementById('uploadSection');
+            const webSearchOption = document.getElementById('webSearchOption');
+            
+            if (mode === 'image-conditioning') {
+                uploadSection.classList.add('active');
+                webSearchOption.style.display = 'none'; // Nascondi ricerca web per image conditioning
+            } else {
+                uploadSection.classList.remove('active');
+                webSearchOption.style.display = 'block'; // Mostra ricerca web per text-to-image
+                uploadedImageBase64 = null;
+                document.getElementById('uploadPreview').style.display = 'none';
+                document.getElementById('uploadPlaceholder').style.display = 'block';
+            }
+        }
+
+        function handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                uploadedImageBase64 = e.target.result;
+                const preview = document.getElementById('uploadPreview');
+                const placeholder = document.getElementById('uploadPlaceholder');
+                preview.src = uploadedImageBase64;
+                preview.style.display = 'block';
+                placeholder.style.display = 'none';
+                document.getElementById('uploadSection').classList.add('has-image');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function setVideoMode(mode) {
+            currentVideoMode = mode;
+            const buttons = document.querySelectorAll('#videos-tab .mode-btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            const uploadSection = document.getElementById('videoUploadSection');
+            if (mode === 'image-to-video') {
+                uploadSection.classList.add('active');
+            } else {
+                uploadSection.classList.remove('active');
+                uploadedVideoImageBase64 = null;
+                document.getElementById('videoUploadPreview').style.display = 'none';
+                document.getElementById('videoUploadPlaceholder').style.display = 'block';
+            }
+        }
+
+        function handleVideoImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                // Ridimensiona l'immagine a 1280x720 (richiesto da Nova Reel)
+                resizeImageTo1280x720(e.target.result, function(resizedBase64) {
+                    uploadedVideoImageBase64 = resizedBase64;
+                    const preview = document.getElementById('videoUploadPreview');
+                    const placeholder = document.getElementById('videoUploadPlaceholder');
+                    preview.src = uploadedVideoImageBase64;
+                    preview.style.display = 'block';
+                    placeholder.style.display = 'none';
+                    document.getElementById('videoUploadSection').classList.add('has-image');
+                });
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function resizeImageTo1280x720(base64Image, callback) {
+            const img = new Image();
+            img.onload = function() {
+                const canvas = document.createElement('canvas');
+                canvas.width = 1280;
+                canvas.height = 720;
+                const ctx = canvas.getContext('2d');
+                
+                // Riempi lo sfondo con bianco per rimuovere trasparenza
+                // Nova Reel non supporta immagini con canale alpha
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, 1280, 720);
+                
+                // Calcola il crop per mantenere l'aspect ratio e riempire 1280x720
+                const targetRatio = 1280 / 720;
+                const imgRatio = img.width / img.height;
+                
+                let sourceX = 0, sourceY = 0, sourceWidth = img.width, sourceHeight = img.height;
+                
+                if (imgRatio > targetRatio) {
+                    // Immagine più larga - crop i lati
+                    sourceWidth = img.height * targetRatio;
+                    sourceX = (img.width - sourceWidth) / 2;
+                } else {
+                    // Immagine più alta - crop sopra/sotto
+                    sourceHeight = img.width / targetRatio;
+                    sourceY = (img.height - sourceHeight) / 2;
+                }
+                
+                // Disegna l'immagine ridimensionata e croppata sopra lo sfondo bianco
+                ctx.drawImage(img, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, 1280, 720);
+                
+                // Converti in base64 JPEG (nessuna trasparenza)
+                // JPEG è più efficiente e garantisce nessun canale alpha
+                callback(canvas.toDataURL('image/jpeg', 0.95));
+            };
+            img.src = base64Image;
+        }
+
+        // Click to upload
+        document.addEventListener('DOMContentLoaded', function() {
+            // Image upload area (for image conditioning)
+            const uploadArea = document.getElementById('uploadSection');
+            uploadArea.addEventListener('click', function() {
+                if (currentImageMode === 'image-conditioning') {
+                    document.getElementById('imageUpload').click();
+                }
+            });
+
+            // Drag and drop for image conditioning
+            uploadArea.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                if (currentImageMode === 'image-conditioning') {
+                    uploadArea.style.borderColor = '#667eea';
+                    uploadArea.style.background = '#f0f4ff';
+                }
+            });
+
+            uploadArea.addEventListener('dragleave', function(e) {
+                e.preventDefault();
+                uploadArea.style.borderColor = '#e0e0e0';
+                uploadArea.style.background = 'white';
+            });
+
+            uploadArea.addEventListener('drop', function(e) {
+                e.preventDefault();
+                uploadArea.style.borderColor = '#e0e0e0';
+                uploadArea.style.background = 'white';
+                
+                if (currentImageMode === 'image-conditioning' && e.dataTransfer.files.length > 0) {
+                    const file = e.dataTransfer.files[0];
+                    if (file.type.startsWith('image/')) {
+                        const fakeEvent = { target: { files: [file] } };
+                        handleImageUpload(fakeEvent);
+                    }
+                }
+            });
+
+            // Video upload area (for image-to-video)
+            const videoUploadArea = document.getElementById('videoUploadSection');
+            videoUploadArea.addEventListener('click', function() {
+                if (currentVideoMode === 'image-to-video') {
+                    document.getElementById('videoImageUpload').click();
+                }
+            });
+
+            // Drag and drop for image-to-video
+            videoUploadArea.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                if (currentVideoMode === 'image-to-video') {
+                    videoUploadArea.style.borderColor = '#667eea';
+                    videoUploadArea.style.background = '#f0f4ff';
+                }
+            });
+
+            videoUploadArea.addEventListener('dragleave', function(e) {
+                e.preventDefault();
+                videoUploadArea.style.borderColor = '#e0e0e0';
+                videoUploadArea.style.background = 'white';
+            });
+
+            videoUploadArea.addEventListener('drop', function(e) {
+                e.preventDefault();
+                videoUploadArea.style.borderColor = '#e0e0e0';
+                videoUploadArea.style.background = 'white';
+                
+                if (currentVideoMode === 'image-to-video' && e.dataTransfer.files.length > 0) {
+                    const file = e.dataTransfer.files[0];
+                    if (file.type.startsWith('image/')) {
+                        const fakeEvent = { target: { files: [file] } };
+                        handleVideoImageUpload(fakeEvent);
+                    }
+                }
+            });
+        });
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            if (tab === 'images') {
+                document.querySelectorAll('.tab')[0].classList.add('active');
+                document.getElementById('images-tab').classList.add('active');
+            } else if (tab === 'videos') {
+                document.querySelectorAll('.tab')[1].classList.add('active');
+                document.getElementById('videos-tab').classList.add('active');
+            } else if (tab === 'endpoints') {
+                document.querySelectorAll('.tab')[2].classList.add('active');
+                document.getElementById('endpoints-tab').classList.add('active');
+            }
+        }
+
+        function saveEndpoints() {
+            const imageEndpoint = document.getElementById('imageApiEndpoint').value.trim();
+            const videoEndpoint = document.getElementById('videoApiEndpoint').value.trim();
+            const statusEndpoint = document.getElementById('statusApiEndpoint').value.trim();
+
+            if (!imageEndpoint || !videoEndpoint || !statusEndpoint) {
+                showStatus('endpointStatus', '⚠️ Tutti gli endpoint sono richiesti', 'error');
+                return;
+            }
+
+            // Salva in localStorage per persistenza
+            localStorage.setItem('nova_image_endpoint', imageEndpoint);
+            localStorage.setItem('nova_video_endpoint', videoEndpoint);
+            localStorage.setItem('nova_status_endpoint', statusEndpoint);
+
+            showStatus('endpointStatus', '✅ Configurazione salvata con successo!', 'success');
+            
+            setTimeout(() => {
+                document.getElementById('endpointStatus').style.display = 'none';
+            }, 3000);
+        }
+
+        // Carica endpoint salvati all'avvio
+        window.addEventListener('DOMContentLoaded', function() {
+            const savedImageEndpoint = localStorage.getItem('nova_image_endpoint');
+            const savedVideoEndpoint = localStorage.getItem('nova_video_endpoint');
+            const savedStatusEndpoint = localStorage.getItem('nova_status_endpoint');
+
+            if (savedImageEndpoint) document.getElementById('imageApiEndpoint').value = savedImageEndpoint;
+            if (savedVideoEndpoint) document.getElementById('videoApiEndpoint').value = savedVideoEndpoint;
+            if (savedStatusEndpoint) document.getElementById('statusApiEndpoint').value = savedStatusEndpoint;
+        });
+
+        function showStatus(elementId, message, type) {
+            const el = document.getElementById(elementId);
+            el.textContent = message;
+            el.className = `status ${type}`;
+            el.style.display = 'block';
+        }
+
+        async function generateImage() {
+            const endpoint = document.getElementById('imageApiEndpoint').value.trim();
+            const prompt = document.getElementById('imagePrompt').value.trim();
+            const resolution = document.getElementById('resolution').value;
+
+            if (!endpoint || !prompt) {
+                showStatus('imageStatus', 'Inserisci endpoint e prompt', 'error');
+                return;
+            }
+
+            // Verifica se serve l'immagine per image conditioning
+            if (currentImageMode === 'image-conditioning' && !uploadedImageBase64) {
+                showStatus('imageStatus', 'Carica un\'immagine da modificare', 'error');
+                return;
+            }
+
+            document.getElementById('imageContainer').innerHTML = '<div class="spinner"></div><p style="color:white;text-align:center;">Generazione in corso...</p>';
+            showStatus('imageStatus', 'Generazione in corso...', 'info');
+
+            try {
+                const requestBody = {
+                    prompt,
+                    resolution,
+                    mode: currentImageMode
+                };
+
+                // Aggiungi enableSearch solo per text-to-image
+                if (currentImageMode === 'text-to-image') {
+                    const enableSearch = document.getElementById('enableWebSearch').checked;
+                    requestBody.enableSearch = enableSearch;
+                }
+
+                // Aggiungi l'immagine se in modalità image-conditioning
+                if (currentImageMode === 'image-conditioning' && uploadedImageBase64) {
+                    requestBody.conditionImage = uploadedImageBase64;
+                }
+
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+
+                currentImageData = data.image;
+                document.getElementById('imageContainer').innerHTML = `<img src="data:image/png;base64,${data.image}">`;
+                document.getElementById('downloadImageBtn').style.display = 'block';
+                
+                const modeText = currentImageMode === 'image-conditioning' ? 'modificata' : 'generata';
+                showStatus('imageStatus', `✅ Immagine ${modeText}!`, 'success');
+            } catch (error) {
+                document.getElementById('imageContainer').innerHTML = '<div class="placeholder"><p style="color:#ccc;">Errore</p></div>';
+                showStatus('imageStatus', `❌ ${error.message}`, 'error');
+            }
+        }
+
+        async function generateVideo() {
+            const endpoint = document.getElementById('videoApiEndpoint').value.trim();
+            const statusEndpoint = document.getElementById('statusApiEndpoint').value.trim();
+            const prompt = document.getElementById('videoPrompt').value.trim();
+            const duration = parseInt(document.getElementById('duration').value);
+
+            if (!endpoint || !statusEndpoint || !prompt) {
+                showStatus('videoStatus', 'Inserisci tutti i campi', 'error');
+                return;
+            }
+
+            // Verifica se serve l'immagine per image-to-video
+            if (currentVideoMode === 'image-to-video' && !uploadedVideoImageBase64) {
+                showStatus('videoStatus', 'Carica un\'immagine da animare', 'error');
+                return;
+            }
+
+            document.getElementById('videoContainer').innerHTML = '<div class="spinner"></div><p style="color:white;text-align:center;">Avvio generazione video...</p>';
+            document.getElementById('videoProgress').style.display = 'block';
+            showStatus('videoStatus', 'Avvio generazione...', 'info');
+
+            try {
+                const requestBody = {
+                    prompt,
+                    duration
+                };
+
+                // Aggiungi l'immagine se in modalità image-to-video
+                if (currentVideoMode === 'image-to-video' && uploadedVideoImageBase64) {
+                    requestBody.inputImage = uploadedVideoImageBase64;
+                }
+
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const data = await response.json();
+                if (data.error) throw new Error(data.error);
+
+                const modeText = currentVideoMode === 'image-to-video' ? 'da immagine' : 'da testo';
+                showStatus('videoStatus', `🎬 Video ${modeText} in generazione... (${data.estimatedTime}s stimati)`, 'info');
+                pollVideoStatus(data.jobArn, statusEndpoint, data.estimatedTime);
+            } catch (error) {
+                document.getElementById('videoContainer').innerHTML = '<div class="placeholder"><p style="color:#ccc;">Errore</p></div>';
+                document.getElementById('videoProgress').style.display = 'none';
+                showStatus('videoStatus', `❌ ${error.message}`, 'error');
+            }
+        }
+
+        async function pollVideoStatus(jobArn, endpoint, estimatedTime) {
+            let elapsed = 0;
+            const interval = 10000; // 10 secondi
+
+            pollingInterval = setInterval(async () => {
+                elapsed += interval / 1000;
+                const progress = Math.min((elapsed / estimatedTime) * 100, 95);
+                document.getElementById('videoProgressFill').style.width = `${progress}%`;
+
+                try {
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ jobArn })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.status === 'completed') {
+                        clearInterval(pollingInterval);
+                        document.getElementById('videoProgressFill').style.width = '100%';
+                        currentVideoUrl = data.videoUrl;
+                        document.getElementById('videoContainer').innerHTML = `<video controls src="${data.videoUrl}"></video>`;
+                        document.getElementById('downloadVideoBtn').style.display = 'block';
+                        showStatus('videoStatus', '✅ Video generato con successo!', 'success');
+                        setTimeout(() => {
+                            document.getElementById('videoProgress').style.display = 'none';
+                        }, 2000);
+                    } else if (data.status === 'failed') {
+                        clearInterval(pollingInterval);
+                        document.getElementById('videoContainer').innerHTML = '<div class="placeholder"><p style="color:#ccc;">Errore</p></div>';
+                        document.getElementById('videoProgress').style.display = 'none';
+                        showStatus('videoStatus', `❌ ${data.error}`, 'error');
+                    } else {
+                        showStatus('videoStatus', `⏳ Generazione in corso... ${Math.round(elapsed)}s / ${estimatedTime}s`, 'info');
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                }
+            }, interval);
+        }
+
+        function downloadImage() {
+            if (!currentImageData) return;
+            const link = document.createElement('a');
+            link.href = `data:image/png;base64,${currentImageData}`;
+            link.download = `nova-image-${Date.now()}.png`;
+            link.click();
+        }
+
+        function downloadVideo() {
+            if (!currentVideoUrl) return;
+            window.open(currentVideoUrl, '_blank');
+        }
+    </script>
+</body>
+</html>

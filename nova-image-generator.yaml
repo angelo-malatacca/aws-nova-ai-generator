@@ -1,0 +1,671 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Nova Canvas Image Generator with Autonomous Web Search Integration'
+
+Parameters:
+  AllowedOrigin:
+    Type: String
+    Default: '*'
+    Description: 'CORS allowed origin'
+
+  TavilyApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: 'Tavily API Key for web search - Optional'
+
+  DeploymentTimestamp:
+    Type: String
+    Default: '2026-02-06-v13-video-path-fix'
+    Description: 'Change this to force a new API deployment'
+
+Resources:
+  # S3 Bucket for video storage
+  NovaVideosBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'nova-videos-${AWS::AccountId}'
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldVideos
+            Status: Enabled
+            ExpirationInDays: 7
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - HEAD
+            AllowedOrigins:
+              - '*'
+            MaxAge: 3600
+
+  NovaLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockInvokePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-canvas-v1:0'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-lite-v1:0'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-reel-v1:0'
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:StartAsyncInvoke
+                  - bedrock:GetAsyncInvoke
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:async-invoke/*'
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt NovaVideosBucket.Arn
+                  - !Sub '${NovaVideosBucket.Arn}/*'
+                  - !Sub '${NovaVideosBucket.Arn}/*'
+
+  WebSearchFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: NovaWebSearchFunction
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt NovaLambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          TAVILY_API_KEY: !Ref TavilyApiKey
+      Code:
+        ZipFile: >
+          import json
+
+          import urllib.request
+
+          import urllib.parse
+
+          import os
+
+
+          def lambda_handler(event, context):
+              try:
+                  body = json.loads(event.get('body', '{}'))
+                  query = body.get('query', '')
+                  if not query:
+                      return {'statusCode': 400, 'body': json.dumps({'error': 'Query is required'})}
+                  tavily_key = os.environ.get('TAVILY_API_KEY', '')
+                  if tavily_key:
+                      search_results = search_with_tavily(query, tavily_key)
+                  else:
+                      search_results = search_with_duckduckgo(query)
+                  return {'statusCode': 200, 'body': json.dumps({'query': query, 'results': search_results})}
+              except Exception as e:
+                  return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
+
+          def search_with_tavily(query, api_key):
+              try:
+                  url = "https://api.tavily.com/search"
+                  data = json.dumps({"api_key": api_key, "query": query, "search_depth": "basic", "max_results": 3}).encode('utf-8')
+                  req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+                  with urllib.request.urlopen(req, timeout=10) as response:
+                      result = json.loads(response.read().decode('utf-8'))
+                  results = []
+                  for item in result.get('results', [])[:3]:
+                      results.append({'title': item.get('title', ''), 'content': item.get('content', '')[:500], 'url': item.get('url', '')})
+                  return results
+              except Exception as e:
+                  return search_with_duckduckgo(query)
+
+          def search_with_duckduckgo(query):
+              try:
+                  encoded_query = urllib.parse.quote(query)
+                  url = f"https://api.duckduckgo.com/?q={encoded_query}&format=json&no_html=1"
+                  req = urllib.request.Request(url)
+                  with urllib.request.urlopen(req, timeout=10) as response:
+                      data = json.loads(response.read().decode('utf-8'))
+                  results = []
+                  if data.get('Abstract'):
+                      results.append({'title': data.get('Heading', 'Info'), 'content': data.get('Abstract', '')[:500], 'url': data.get('AbstractURL', '')})
+                  for topic in data.get('RelatedTopics', [])[:2]:
+                      if isinstance(topic, dict) and 'Text' in topic:
+                          results.append({'title': topic.get('Text', '')[:100], 'content': topic.get('Text', '')[:500], 'url': topic.get('FirstURL', '')})
+                  if not results:
+                      results.append({'title': 'Search completed', 'content': f'Search for: {query}', 'url': ''})
+                  return results
+              except Exception as e:
+                  return [{'title': 'Search unavailable', 'content': f'Unable to search: {query}', 'url': ''}]
+
+  IntelligentImageGeneratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: NovaIntelligentImageGenerator
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt NovaLambdaExecutionRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          MODEL_ID_CANVAS: amazon.nova-canvas-v1:0
+          MODEL_ID_LITE: amazon.nova-lite-v1:0
+          MODEL_ID_REEL: amazon.nova-reel-v1:0
+          WEB_SEARCH_FUNCTION: !Ref WebSearchFunction
+          VIDEOS_BUCKET: !Ref NovaVideosBucket
+      Code:
+        ZipFile: >
+          import json
+
+          import boto3
+
+          import os
+
+          import random
+
+          import base64
+
+
+          bedrock_runtime = boto3.client('bedrock-runtime', region_name=os.environ['AWS_REGION'])
+
+          lambda_client = boto3.client('lambda')
+
+
+          def lambda_handler(event, context):
+              try:
+                  body = json.loads(event.get('body', '{}'))
+                  user_prompt = body.get('prompt', '')
+                  negative_prompt = body.get('negativePrompt', '')
+                  enable_search = body.get('enableSearch', True)
+                  condition_image = body.get('conditionImage', '')
+                  mode = body.get('mode', 'text-to-image')
+                  resolution = body.get('resolution', '1280x720')
+                  if not user_prompt:
+                      return create_response(400, {'error': 'Prompt is required'})
+                  search_info = ""
+                  if enable_search and mode == 'text-to-image':
+                      search_query = extract_search_query(user_prompt)
+                      if search_query:
+                          search_results = perform_web_search(search_query)
+                          search_info = format_search_results(search_results)
+                  enhanced_prompt = enhance_prompt_with_ai(user_prompt, search_info)
+                  if mode == 'image-conditioning' and condition_image:
+                      image_data = generate_image_with_conditioning(enhanced_prompt, negative_prompt, condition_image)
+                  else:
+                      width, height = map(int, resolution.split('x'))
+                      image_data = generate_image(enhanced_prompt, negative_prompt, width, height)
+                  return create_response(200, {'image': image_data['image'], 'seed': image_data['seed'], 'dimensions': resolution, 'originalPrompt': user_prompt, 'enhancedPrompt': enhanced_prompt, 'searchPerformed': bool(search_info), 'mode': mode})
+              except Exception as e:
+                  return create_response(500, {'error': str(e)})
+
+          def extract_search_query(prompt):
+              triggers = ['famous', 'historical', 'landmark', 'city', 'country', 'celebrity', 'architecture', 'tower', 'building', 'monument', 'statue', 'bridge', 'palace', 'castle', 'church', 'cathedral', 'temple', 'museum', 'stadium', 'arena', 'park', 'square', 'street', 'avenue', 'mountain', 'river', 'lake', 'ocean', 'beach', 'island', 'person', 'actor', 'actress', 'singer', 'artist', 'politician', 'athlete', 'ceo', 'founder', 'president', 'king', 'queen', 'game', 'mission', 'level', 'battlefield', 'call of duty', 'movie', 'film', 'series', 'character']
+              prompt_lower = prompt.lower()
+              for trigger in triggers:
+                  if trigger in prompt_lower:
+                      return prompt
+              words = prompt.split()
+              if len(words) >= 2:
+                  return prompt
+              return None
+
+          def perform_web_search(query):
+              try:
+                  response = lambda_client.invoke(FunctionName=os.environ['WEB_SEARCH_FUNCTION'], InvocationType='RequestResponse', Payload=json.dumps({'body': json.dumps({'query': query})}))
+                  result = json.loads(response['Payload'].read())
+                  body = json.loads(result.get('body', '{}'))
+                  return body.get('results', [])
+              except:
+                  return []
+
+          def format_search_results(results):
+              if not results:
+                  return ""
+              formatted = "Reference information from web search:\n"
+              for i, result in enumerate(results[:3], 1):
+                  title = result.get('title', '')
+                  content = result.get('content', '')[:300]
+                  if title and content:
+                      formatted += f"{title}: {content}. "
+              return formatted.strip()
+
+          def enhance_prompt_with_ai(user_prompt, search_info):
+              MAX_PROMPT_LENGTH = 950
+              try:
+                  if search_info:
+                      sys_prompt = "You are a photography expert. Create a concise, detailed image prompt (max 800 characters) based on the user's request and web search info. Include key details from search, professional photography terms, lighting, composition. IMPORTANT: Remove any requests for text, logos, or written words - image generators cannot create readable text. Focus only on visual scene description. Be concise but specific."
+                      search_summary = search_info[:400]
+                      user_msg = f"User wants: {user_prompt}\n\nKey info: {search_summary}\n\nCreate visual scene prompt (max 800 chars, NO text/logos):"
+                  else:
+                      sys_prompt = "You are a photography expert. Enhance this image prompt with professional details, lighting, and composition. Keep it under 800 characters. IMPORTANT: Remove any requests for text, logos, or written words - image generators cannot create readable text. Focus only on visual scene description. Return only the enhanced prompt."
+                      user_msg = f"Original: {user_prompt}\n\nEnhanced (visual only, NO text):"
+                  request = {"messages": [{"role": "user", "content": [{"text": f"{sys_prompt}\n\n{user_msg}"}]}], "inferenceConfig": {"maxTokens": 300, "temperature": 0.7}}
+                  response = bedrock_runtime.converse(modelId=os.environ['MODEL_ID_LITE'], messages=request['messages'], inferenceConfig=request['inferenceConfig'])
+                  enhanced = response['output']['message']['content'][0]['text'].strip()
+                  if not enhanced.lower().endswith(('photorealistic', 'photography', '8k')):
+                      enhanced = enhanced + ", photorealistic, professional photography, 8k"
+                  if len(enhanced) > MAX_PROMPT_LENGTH:
+                      enhanced = enhanced[:MAX_PROMPT_LENGTH].rsplit(',', 1)[0].strip()
+                      enhanced = enhanced + ", photorealistic, 8k"
+                  return enhanced
+              except Exception as e:
+                  fallback = f"{user_prompt}"
+                  if search_info:
+                      search_brief = search_info[:150]
+                      fallback = f"{user_prompt}, {search_brief}"
+                  result = f"{fallback}, photorealistic, professional photography, 8k"
+                  if len(result) > MAX_PROMPT_LENGTH:
+                      result = result[:MAX_PROMPT_LENGTH].rsplit(',', 1)[0].strip() + ", 8k"
+                  return result
+
+          def generate_image(prompt, negative_prompt, width=1280, height=720):
+              MAX_PROMPT_LENGTH = 1024
+              if len(prompt) > MAX_PROMPT_LENGTH:
+                  prompt = prompt[:MAX_PROMPT_LENGTH].rsplit(',', 1)[0].strip()
+              default_neg = "text, letters, words, writing, watermark, signature, logo, typography, captions, subtitles, cartoon, anime, illustration, low quality, blurry, distorted"
+              combined_neg = f"{negative_prompt}, {default_neg}" if negative_prompt else default_neg
+              if len(combined_neg) > MAX_PROMPT_LENGTH:
+                  combined_neg = combined_neg[:MAX_PROMPT_LENGTH].rsplit(',', 1)[0].strip()
+              request = {"taskType": "TEXT_IMAGE", "textToImageParams": {"text": prompt, "negativeText": combined_neg}, "imageGenerationConfig": {"numberOfImages": 1, "quality": "premium", "width": width, "height": height, "cfgScale": 8.0, "seed": random.randint(0, 2147483647)}}
+              response = bedrock_runtime.invoke_model(modelId=os.environ['MODEL_ID_CANVAS'], contentType='application/json', accept='application/json', body=json.dumps(request))
+              response_body = json.loads(response['body'].read())
+              images = response_body.get('images', [])
+              if not images:
+                  raise Exception('No image generated')
+              return {'image': images[0], 'seed': request['imageGenerationConfig']['seed']}
+
+          def generate_image_with_conditioning(prompt, negative_prompt, condition_image_base64):
+              MAX_PROMPT_LENGTH = 1024
+              if len(prompt) > MAX_PROMPT_LENGTH:
+                  prompt = prompt[:MAX_PROMPT_LENGTH].rsplit(',', 1)[0].strip()
+              default_neg = "text, letters, words, writing, watermark, signature, logo, typography, captions, subtitles, cartoon, anime, illustration, low quality, blurry, distorted"
+              combined_neg = f"{negative_prompt}, {default_neg}" if negative_prompt else default_neg
+              if len(combined_neg) > MAX_PROMPT_LENGTH:
+                  combined_neg = combined_neg[:MAX_PROMPT_LENGTH].rsplit(',', 1)[0].strip()
+              if condition_image_base64.startswith('data:image'):
+                  condition_image_base64 = condition_image_base64.split(',')[1]
+              request = {"taskType": "IMAGE_VARIATION", "imageVariationParams": {"text": prompt, "negativeText": combined_neg, "images": [condition_image_base64]}, "imageGenerationConfig": {"numberOfImages": 1, "quality": "premium", "cfgScale": 8.0, "seed": random.randint(0, 2147483647)}}
+              response = bedrock_runtime.invoke_model(modelId=os.environ['MODEL_ID_CANVAS'], contentType='application/json', accept='application/json', body=json.dumps(request))
+              response_body = json.loads(response['body'].read())
+              images = response_body.get('images', [])
+              if not images:
+                  raise Exception('No image generated')
+              return {'image': images[0], 'seed': request['imageGenerationConfig']['seed']}
+
+          def create_response(status_code, body):
+              return {'statusCode': status_code, 'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token', 'Access-Control-Allow-Methods': 'POST,OPTIONS'}, 'body': json.dumps(body)}
+
+  NovaImageAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: NovaIntelligentImageGeneratorAPI
+      Description: API for Nova Canvas with Web Search
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: 'execute-api:Invoke'
+            Resource: '*'
+
+  GenerateImageResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref NovaImageAPI
+      ParentId: !GetAtt NovaImageAPI.RootResourceId
+      PathPart: generate
+
+  GenerateImageMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NovaImageAPI
+      ResourceId: !Ref GenerateImageResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${IntelligentImageGeneratorFunction.Arn}/invocations'
+
+  GenerateImageOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NovaImageAPI
+      ResourceId: !Ref GenerateImageResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,Accept'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS,GET'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: 'Empty'
+
+  GenerateVideoResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref NovaImageAPI
+      ParentId: !GetAtt NovaImageAPI.RootResourceId
+      PathPart: generate-video
+
+  GenerateVideoMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NovaImageAPI
+      ResourceId: !Ref GenerateVideoResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${VideoGeneratorFunction.Arn}/invocations'
+
+  GenerateVideoOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NovaImageAPI
+      ResourceId: !Ref GenerateVideoResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,Accept'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS,GET'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: 'Empty'
+
+  VideoStatusResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref NovaImageAPI
+      ParentId: !GetAtt NovaImageAPI.RootResourceId
+      PathPart: video-status
+
+  VideoStatusMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NovaImageAPI
+      ResourceId: !Ref VideoStatusResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${VideoStatusFunction.Arn}/invocations'
+
+  VideoStatusOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NovaImageAPI
+      ResourceId: !Ref VideoStatusResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,Accept'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS,GET'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: 'Empty'
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - GenerateImageMethod
+      - GenerateImageOptionsMethod
+      - GenerateVideoMethod
+      - GenerateVideoOptionsMethod
+      - VideoStatusMethod
+      - VideoStatusOptionsMethod
+    Properties:
+      RestApiId: !Ref NovaImageAPI
+      StageName: prod
+      Description: !Sub 'Deployment ${DeploymentTimestamp}'
+
+  LambdaApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref IntelligentImageGeneratorFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NovaImageAPI}/*/*'
+
+  LambdaVideoApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref VideoGeneratorFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NovaImageAPI}/*/*'
+
+  LambdaVideoStatusApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref VideoStatusFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NovaImageAPI}/*/*'
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WebSearchFunction
+      Action: lambda:InvokeFunction
+      Principal: lambda.amazonaws.com
+      SourceArn: !GetAtt IntelligentImageGeneratorFunction.Arn
+
+  VideoGeneratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: NovaVideoGenerator
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt NovaLambdaExecutionRole.Arn
+      Timeout: 900
+      MemorySize: 512
+      Environment:
+        Variables:
+          MODEL_ID_REEL: amazon.nova-reel-v1:0
+          VIDEOS_BUCKET: !Ref NovaVideosBucket
+      Code:
+        ZipFile: >
+          import json
+
+          import boto3
+
+          import os
+
+          import random
+
+          import time
+
+
+          bedrock_runtime = boto3.client('bedrock-runtime', region_name=os.environ['AWS_REGION'])
+
+
+          def lambda_handler(event, context):
+              try:
+                  body = json.loads(event.get('body', '{}'))
+                  prompt = body.get('prompt', '')
+                  input_image = body.get('inputImage', '')
+                  duration = body.get('duration', 6)
+                  if not prompt:
+                      return create_response(400, {'error': 'Prompt is required'})
+                  job_arn = start_video_generation(prompt, input_image, duration)
+                  return create_response(200, {'jobArn': job_arn, 'status': 'started', 'estimatedTime': duration * 15})
+              except Exception as e:
+                  return create_response(500, {'error': str(e)})
+
+          def start_video_generation(prompt, input_image, duration):
+              s3_output = f"s3://{os.environ['VIDEOS_BUCKET']}/videos/"
+              seed = random.randint(0, 2147483646)
+              if input_image:
+                  if input_image.startswith('data:image'):
+                      input_image = input_image.split(',')[1]
+                  request = {"taskType": "TEXT_VIDEO", "textToVideoParams": {"text": prompt, "images": [{"format": "png", "source": {"bytes": input_image}}]}, "videoGenerationConfig": {"durationSeconds": duration, "fps": 24, "dimension": "1280x720", "seed": seed}}
+              else:
+                  request = {"taskType": "TEXT_VIDEO", "textToVideoParams": {"text": prompt}, "videoGenerationConfig": {"durationSeconds": duration, "fps": 24, "dimension": "1280x720", "seed": seed}}
+              response = bedrock_runtime.start_async_invoke(modelId=os.environ['MODEL_ID_REEL'], modelInput=request, outputDataConfig={'s3OutputDataConfig': {'s3Uri': s3_output}})
+              return response['invocationArn']
+
+          def create_response(status_code, body):
+              return {'statusCode': status_code, 'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'POST,OPTIONS'}, 'body': json.dumps(body)}
+
+  VideoStatusFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: NovaVideoStatus
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt NovaLambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          VIDEOS_BUCKET: !Ref NovaVideosBucket
+      Code:
+        ZipFile: >
+          import json
+
+          import boto3
+
+          import os
+
+          import base64
+
+
+          bedrock_runtime = boto3.client('bedrock-runtime', region_name=os.environ['AWS_REGION'])
+
+          s3_client = boto3.client('s3')
+
+
+          def lambda_handler(event, context):
+              try:
+                  body = json.loads(event.get('body', '{}'))
+                  job_arn = body.get('jobArn', '')
+                  if not job_arn:
+                      return create_response(400, {'error': 'jobArn is required'})
+                  response = bedrock_runtime.get_async_invoke(invocationArn=job_arn)
+                  status = response['status']
+                  if status == 'Completed':
+                      output_uri = response['outputDataConfig']['s3OutputDataConfig']['s3Uri']
+                      bucket = os.environ['VIDEOS_BUCKET']
+                      key = output_uri.replace(f"s3://{bucket}/", "")
+                      # Bedrock salva il video come output.mp4 nella cartella del job
+                      if not key.endswith('.mp4'):
+                          key = key.rstrip('/') + '/output.mp4'
+                      video_url = s3_client.generate_presigned_url('get_object', Params={'Bucket': bucket, 'Key': key}, ExpiresIn=3600)
+                      return create_response(200, {'status': 'completed', 'videoUrl': video_url})
+                  elif status == 'InProgress':
+                      return create_response(200, {'status': 'in_progress'})
+                  elif status == 'Failed':
+                      failure_message = response.get('failureMessage', 'Unknown error')
+                      return create_response(200, {'status': 'failed', 'error': failure_message})
+                  else:
+                      return create_response(200, {'status': status.lower()})
+              except Exception as e:
+                  return create_response(500, {'error': str(e)})
+
+          def create_response(status_code, body):
+              return {'statusCode': status_code, 'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Allow-Methods': 'POST,OPTIONS'}, 'body': json.dumps(body)}
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL for images
+    Value: !Sub 'https://${NovaImageAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/generate'
+
+  VideoApiEndpoint:
+    Description: API Gateway endpoint URL for video generation
+    Value: !Sub 'https://${NovaImageAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/generate-video'
+
+  VideoStatusEndpoint:
+    Description: API Gateway endpoint URL for video status
+    Value: !Sub 'https://${NovaImageAPI}.execute-api.${AWS::Region}.amazonaws.com/prod/video-status'
+
+  VideosBucket:
+    Description: S3 bucket for generated videos
+    Value: !Ref NovaVideosBucket
+
+  WebSearchFunctionArn:
+    Description: Web Search Lambda ARN
+    Value: !GetAtt WebSearchFunction.Arn
+
+  ImageGeneratorFunctionArn:
+    Description: Image Generator Lambda ARN
+    Value: !GetAtt IntelligentImageGeneratorFunction.Arn
+
+  VideoGeneratorFunctionArn:
+    Description: Video Generator Lambda ARN
+    Value: !GetAtt VideoGeneratorFunction.Arn
+
+  VideoStatusFunctionArn:
+    Description: Video Status Lambda ARN
+    Value: !GetAtt VideoStatusFunction.Arn
+
