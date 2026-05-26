@@ -16,7 +16,7 @@ Parameters:
 
   DeploymentTimestamp:
     Type: String
-    Default: '2026-02-06-v13-video-path-fix'
+    Default: '2026-05-26-v17-nova-reel-v1.1'
     Description: 'Change this to force a new API deployment'
 
 Resources:
@@ -61,10 +61,16 @@ Resources:
               - Effect: Allow
                 Action:
                   - bedrock:InvokeModel
+                  - bedrock:Converse
                 Resource:
-                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-canvas-v1:0'
-                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-lite-v1:0'
+                  - !Sub 'arn:aws:bedrock:us-west-2::foundation-model/stability.sd3-5-large-v1:0'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-2-lite-v1:0'
                   - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-reel-v1:0'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.nova-reel-v1:1'
+                  - 'arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.amazon.nova-2-lite-v1:0'
+                  - 'arn:aws:bedrock:us-east-1:566644577233:inference-profile/us.amazon.nova-2-lite-v1:0'
+                  - 'arn:aws:bedrock:us-*::foundation-model/amazon.nova-2-lite-v1:0'
               - Effect: Allow
                 Action:
                   - bedrock:InvokeModel
@@ -168,9 +174,10 @@ Resources:
       MemorySize: 1024
       Environment:
         Variables:
-          MODEL_ID_CANVAS: amazon.nova-canvas-v1:0
-          MODEL_ID_LITE: amazon.nova-lite-v1:0
-          MODEL_ID_REEL: amazon.nova-reel-v1:0
+          MODEL_ID_IMAGE: stability.sd3-5-large-v1:0
+          MODEL_ID_LITE: us.amazon.nova-2-lite-v1:0
+          MODEL_ID_REEL: amazon.nova-reel-v1:1
+          IMAGE_REGION: us-west-2
           WEB_SEARCH_FUNCTION: !Ref WebSearchFunction
           VIDEOS_BUCKET: !Ref NovaVideosBucket
       Code:
@@ -187,6 +194,8 @@ Resources:
 
 
           bedrock_runtime = boto3.client('bedrock-runtime', region_name=os.environ['AWS_REGION'])
+
+          bedrock_image = boto3.client('bedrock-runtime', region_name=os.environ.get('IMAGE_REGION', 'us-west-2'))
 
           lambda_client = boto3.client('lambda')
 
@@ -212,8 +221,7 @@ Resources:
                   if mode == 'image-conditioning' and condition_image:
                       image_data = generate_image_with_conditioning(enhanced_prompt, negative_prompt, condition_image)
                   else:
-                      width, height = map(int, resolution.split('x'))
-                      image_data = generate_image(enhanced_prompt, negative_prompt, width, height)
+                      image_data = generate_image(enhanced_prompt, negative_prompt)
                   return create_response(200, {'image': image_data['image'], 'seed': image_data['seed'], 'dimensions': resolution, 'originalPrompt': user_prompt, 'enhancedPrompt': enhanced_prompt, 'searchPerformed': bool(search_info), 'mode': mode})
               except Exception as e:
                   return create_response(500, {'error': str(e)})
@@ -253,12 +261,12 @@ Resources:
               MAX_PROMPT_LENGTH = 950
               try:
                   if search_info:
-                      sys_prompt = "You are a photography expert. Create a concise, detailed image prompt (max 800 characters) based on the user's request and web search info. Include key details from search, professional photography terms, lighting, composition. IMPORTANT: Remove any requests for text, logos, or written words - image generators cannot create readable text. Focus only on visual scene description. Be concise but specific."
+                      sys_prompt = "You are a photography expert. Create a concise, detailed image prompt IN ENGLISH (max 800 characters) based on the user's request and web search info. The user may write in any language - always translate and respond in English. Include key details from search, professional photography terms, lighting, composition. IMPORTANT: Remove any requests for text, logos, or written words - image generators cannot create readable text. Focus only on visual scene description. Be concise but specific."
                       search_summary = search_info[:400]
-                      user_msg = f"User wants: {user_prompt}\n\nKey info: {search_summary}\n\nCreate visual scene prompt (max 800 chars, NO text/logos):"
+                      user_msg = f"User wants: {user_prompt}\n\nKey info: {search_summary}\n\nCreate visual scene prompt IN ENGLISH (max 800 chars, NO text/logos):"
                   else:
-                      sys_prompt = "You are a photography expert. Enhance this image prompt with professional details, lighting, and composition. Keep it under 800 characters. IMPORTANT: Remove any requests for text, logos, or written words - image generators cannot create readable text. Focus only on visual scene description. Return only the enhanced prompt."
-                      user_msg = f"Original: {user_prompt}\n\nEnhanced (visual only, NO text):"
+                      sys_prompt = "You are a photography expert. Enhance this image prompt with professional details, lighting, and composition IN ENGLISH. The user may write in any language - always translate and respond in English. Keep it under 800 characters. IMPORTANT: Remove any requests for text, logos, or written words - image generators cannot create readable text. Focus only on visual scene description. Return only the enhanced prompt in English."
+                      user_msg = f"Original: {user_prompt}\n\nEnhanced IN ENGLISH (visual only, NO text):"
                   request = {"messages": [{"role": "user", "content": [{"text": f"{sys_prompt}\n\n{user_msg}"}]}], "inferenceConfig": {"maxTokens": 300, "temperature": 0.7}}
                   response = bedrock_runtime.converse(modelId=os.environ['MODEL_ID_LITE'], messages=request['messages'], inferenceConfig=request['inferenceConfig'])
                   enhanced = response['output']['message']['content'][0]['text'].strip()
@@ -278,39 +286,37 @@ Resources:
                       result = result[:MAX_PROMPT_LENGTH].rsplit(',', 1)[0].strip() + ", 8k"
                   return result
 
-          def generate_image(prompt, negative_prompt, width=1280, height=720):
-              MAX_PROMPT_LENGTH = 1024
+          def generate_image(prompt, negative_prompt):
+              MAX_PROMPT_LENGTH = 10000
               if len(prompt) > MAX_PROMPT_LENGTH:
                   prompt = prompt[:MAX_PROMPT_LENGTH].rsplit(',', 1)[0].strip()
               default_neg = "text, letters, words, writing, watermark, signature, logo, typography, captions, subtitles, cartoon, anime, illustration, low quality, blurry, distorted"
               combined_neg = f"{negative_prompt}, {default_neg}" if negative_prompt else default_neg
-              if len(combined_neg) > MAX_PROMPT_LENGTH:
-                  combined_neg = combined_neg[:MAX_PROMPT_LENGTH].rsplit(',', 1)[0].strip()
-              request = {"taskType": "TEXT_IMAGE", "textToImageParams": {"text": prompt, "negativeText": combined_neg}, "imageGenerationConfig": {"numberOfImages": 1, "quality": "premium", "width": width, "height": height, "cfgScale": 8.0, "seed": random.randint(0, 2147483647)}}
-              response = bedrock_runtime.invoke_model(modelId=os.environ['MODEL_ID_CANVAS'], contentType='application/json', accept='application/json', body=json.dumps(request))
+              seed = random.randint(0, 2147483647)
+              request = {"prompt": prompt, "negative_prompt": combined_neg, "seed": seed, "output_format": "png"}
+              response = bedrock_image.invoke_model(modelId=os.environ['MODEL_ID_IMAGE'], contentType='application/json', accept='application/json', body=json.dumps(request))
               response_body = json.loads(response['body'].read())
-              images = response_body.get('images', [])
-              if not images:
+              image_b64 = response_body.get('images', [None])[0]
+              if not image_b64:
                   raise Exception('No image generated')
-              return {'image': images[0], 'seed': request['imageGenerationConfig']['seed']}
+              return {'image': image_b64, 'seed': seed}
 
           def generate_image_with_conditioning(prompt, negative_prompt, condition_image_base64):
-              MAX_PROMPT_LENGTH = 1024
+              MAX_PROMPT_LENGTH = 10000
               if len(prompt) > MAX_PROMPT_LENGTH:
                   prompt = prompt[:MAX_PROMPT_LENGTH].rsplit(',', 1)[0].strip()
               default_neg = "text, letters, words, writing, watermark, signature, logo, typography, captions, subtitles, cartoon, anime, illustration, low quality, blurry, distorted"
               combined_neg = f"{negative_prompt}, {default_neg}" if negative_prompt else default_neg
-              if len(combined_neg) > MAX_PROMPT_LENGTH:
-                  combined_neg = combined_neg[:MAX_PROMPT_LENGTH].rsplit(',', 1)[0].strip()
               if condition_image_base64.startswith('data:image'):
                   condition_image_base64 = condition_image_base64.split(',')[1]
-              request = {"taskType": "IMAGE_VARIATION", "imageVariationParams": {"text": prompt, "negativeText": combined_neg, "images": [condition_image_base64]}, "imageGenerationConfig": {"numberOfImages": 1, "quality": "premium", "cfgScale": 8.0, "seed": random.randint(0, 2147483647)}}
-              response = bedrock_runtime.invoke_model(modelId=os.environ['MODEL_ID_CANVAS'], contentType='application/json', accept='application/json', body=json.dumps(request))
+              seed = random.randint(0, 2147483647)
+              request = {"prompt": prompt, "negative_prompt": combined_neg, "image": condition_image_base64, "mode": "image-to-image", "strength": 0.7, "seed": seed, "output_format": "png"}
+              response = bedrock_image.invoke_model(modelId=os.environ['MODEL_ID_IMAGE'], contentType='application/json', accept='application/json', body=json.dumps(request))
               response_body = json.loads(response['body'].read())
-              images = response_body.get('images', [])
-              if not images:
+              image_b64 = response_body.get('images', [None])[0]
+              if not image_b64:
                   raise Exception('No image generated')
-              return {'image': images[0], 'seed': request['imageGenerationConfig']['seed']}
+              return {'image': image_b64, 'seed': seed}
 
           def create_response(status_code, body):
               return {'statusCode': status_code, 'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token', 'Access-Control-Allow-Methods': 'POST,OPTIONS'}, 'body': json.dumps(body)}
@@ -532,7 +538,7 @@ Resources:
       MemorySize: 512
       Environment:
         Variables:
-          MODEL_ID_REEL: amazon.nova-reel-v1:0
+          MODEL_ID_REEL: amazon.nova-reel-v1:1
           VIDEOS_BUCKET: !Ref NovaVideosBucket
       Code:
         ZipFile: >
